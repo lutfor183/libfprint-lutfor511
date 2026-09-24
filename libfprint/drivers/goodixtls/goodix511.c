@@ -336,7 +336,7 @@ fpi_device_goodixtls511_class_init (FpiDeviceGoodixTls511Class * class)
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
 
   // TODO
-  img_dev_class->score_threshold = 28; /* stricter multi-finger, was 24 */
+  img_dev_class->score_threshold = 20; /* lutfor10: forgiving for tiny 64x80 press sensor, was 28 */
   img_dev_class->img_width = GOODIX511_WIDTH;
   img_dev_class->img_height = GOODIX511_HEIGHT;
   img_dev_class->algorithm = FPI_DEVICE_ALGO_SIGFM;
