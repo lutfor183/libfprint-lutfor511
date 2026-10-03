@@ -1,0 +1,6 @@
+# Goodix 27c6:5117 - allow USB autosuspend so sensor cools when idle/sleep
+# Old (hot) version forced power/control="on", autosuspend="-1" = never sleeps.
+# New: auto + 2s delay + no wakeup + persist across suspend (fixes re-enum).
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="27c6", ATTRS{idProduct}=="5117", ATTR{power/control}="auto", ATTR{power/autosuspend_delay_ms}="2000"
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="27c6", ATTRS{idProduct}=="5117", ATTR{power/wakeup}="disabled"
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="27c6", ATTRS{idProduct}=="5117", ATTR{power/persist}="1"

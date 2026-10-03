@@ -8,7 +8,7 @@ ROOT="$(pwd)"
 BUILD="build-snappy-opt"
 PREFIX="/opt/lutfor-fprint"
 PKGNAME="libfprint-2-lutfor-opt"
-VERSION="1.94.5-lutfor5"
+VERSION="1.94.5-lutfor10"
 
 echo "=== 1. Backup originals ==="
 cp -n libfprint/drivers/goodixtls/goodix511.c libfprint/drivers/goodixtls/goodix511.c.bak-$(date +%F) || true
@@ -96,8 +96,11 @@ dpkg-deb --build /tmp/pkg-$PKGNAME "$ROOT/${PKGNAME}_${VERSION}_amd64.deb"
 echo "Built $ROOT/${PKGNAME}_${VERSION}_amd64.deb (no Conflicts/Replaces)"
 dpkg-deb -f "$ROOT/${PKGNAME}_${VERSION}_amd64.deb" Package Version Depends Conflicts Replaces 2>&1 | head
 
-echo "=== 9. Power fix for snappy wake (disable autosuspend) ==="
-echo 'ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="27c6", ATTRS{idProduct}=="5117", ATTR{power/control}="on", ATTR{power/autosuspend}="-1"' | sudo tee /etc/udev/rules.d/99-goodix511-power.rules >/dev/null
+echo "=== 9. Power fix: cool sleep (auto + no wakeup, NOT on/-1) ==="
+# lutfor10: old on/-1 kept sensor hot in sleep. Use auto/2000/disabled/persist=1 + sleep hook.
+sudo cp heat-fix/99-goodix511-power.rules /etc/udev/rules.d/99-goodix511-power.rules
+sudo cp heat-fix/goodix511-powersave /lib/systemd/system-sleep/goodix511-powersave
+sudo chmod +x /lib/systemd/system-sleep/goodix511-powersave
 sudo udevadm control --reload && sudo udevadm trigger || true
 
 echo "=== 10. Self-test ==="

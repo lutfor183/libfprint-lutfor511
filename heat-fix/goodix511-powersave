@@ -1,0 +1,40 @@
+#!/bin/sh
+# /lib/systemd/system-sleep/goodix511-powersave
+# Ensures Goodix 5117 is released before sleep and reset cleanly on resume.
+# This replaces the old workaround of keeping USB power "on" 24/7 (which caused heat).
+# Finds device dynamically by VID:PID, not fixed bus address.
+
+DEVPATH=""
+for d in /sys/bus/usb/devices/*; do
+  [ -f "$d/idVendor" ] || continue
+  if [ "$(cat "$d/idVendor" 2>/dev/null)" = "27c6" ] && [ "$(cat "$d/idProduct" 2>/dev/null)" = "5117" ]; then
+    DEVPATH="$d"
+    break
+  fi
+done
+[ -z "$DEVPATH" ] && exit 0
+
+case "$1/$2" in
+  pre/*)
+    # Release claim so kernel can suspend USB; stop TLS polling -> cools down
+    systemctl stop fprintd.service 2>/dev/null || true
+    pkill -f "fprintd" 2>/dev/null || true
+    echo auto > "$DEVPATH/power/control" 2>/dev/null || true
+    echo 0 > "$DEVPATH/power/autosuspend" 2>/dev/null || true
+    echo 2000 > "$DEVPATH/power/autosuspend_delay_ms" 2>/dev/null || true
+    echo disabled > "$DEVPATH/power/wakeup" 2>/dev/null || true
+    echo 1 > "$DEVPATH/power/persist" 2>/dev/null || true
+    ;;
+  post/*)
+    # Give USB time to re-enumerate, then force fresh start (fixes stale TLS session)
+    sleep 1
+    if [ -f "$DEVPATH/unauthorized" ]; then
+      echo 1 > "$DEVPATH/unauthorized" 2>/dev/null || true
+      sleep 1
+      echo 0 > "$DEVPATH/unauthorized" 2>/dev/null || true
+    fi
+    udevadm trigger --subsystem-match=usb --attr-match=idVendor=27c6 2>/dev/null || true
+    # fprintd is socket-activated, no need to start - will start on demand
+    ;;
+esac
+exit 0

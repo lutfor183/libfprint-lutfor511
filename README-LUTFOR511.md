@@ -25,7 +25,7 @@ See `git log` / `git diff` for the full change history.
 ## Install on Zorin OS / Ubuntu (fresh machine)
 
 ```bash
-sudo dpkg -i libfprint-2-lutfor-opt_1.94.5-lutfor9_amd64.deb
+sudo dpkg -i libfprint-2-lutfor-opt_1.94.5-lutfor10_amd64.deb
 sudo systemctl restart fprintd
 fprintd-enroll "$USER"   # ~5-10 taps
 fprintd-verify "$USER"   # tap to test
@@ -33,8 +33,7 @@ fprintd-verify "$USER"   # tap to test
 
 The package installs to `/opt/lutfor-fprint` (never touches system
 libfprint), registers `ld.so`, installs a systemd override so `fprintd`
-loads this build, and adds a udev rule that keeps the sensor off USB
-autosuspend (the #1 "works until suspend" cause).
+loads this build, and adds a udev rule with USB autosuspend `auto/2000` + `wakeup=disabled` + `persist=1`, plus a systemd sleep hook that stops `fprintd` pre-sleep and resets USB post-resume. Old `control=on` kept the sensor hot in hibernate — fixed in lutfor10.
 
 `apt upgrade` of the distro `libfprint-2-2` is safe; just re-run
 `sudo systemctl restart fprintd` if auth feels stale afterwards.
@@ -65,7 +64,8 @@ Lutfor <lutfor183.du@gmail.com> — protocol/TLS key reverse engineering,
 driver tuning and packaging.
 
 ## Peaceful multi-finger use (lutfor7 tuning)
-- Threshold `28` (was `24`): stricter, less finger-to-finger false accept on 64x80 sensor. If taps reject too often, press firmer/centered, don't lower it first.
+- lutfor10: threshold `20` (was `28` in lutfor9): forgiving for tiny 64x80 press sensor, faster accept. Power: cool-sleep fix (auto/2000, no wakeup, sleep hook) — no more hot sensor in suspend/hibernate.
+- Threshold history `28` (was `24`): stricter, less finger-to-finger false accept on 64x80 sensor. If taps reject too often, press firmer/centered, don't lower it first.
 - Calibration `5 uses / 30s` (was `8 / 60s`): fresher baseline per finger, still 1 capture per tap. Fixes cross-finger bleed that caused 70/72 noisy 24B reports.
 - Workflow: `rm -rf` stale DB once -> enroll right-index alone -> `fprintd-verify` until <1s -> then add 2nd finger at 2 angles. Never enroll same finger on Windows + Linux (template master = one OS only).
 - `Device already claimed`: close Settings Fingerprint GUI, then `fprintd-enroll`. Keep autosuspend off via `99-goodix511-power.rules`.
