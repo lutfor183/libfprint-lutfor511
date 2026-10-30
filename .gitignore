@@ -1,0 +1,8 @@
+*.o
+*.swp
+_build
+.vscode/
+build/
+*.deb
+*.bak-*
+build-*/

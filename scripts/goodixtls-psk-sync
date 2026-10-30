@@ -1,0 +1,123 @@
+#!/opt/lutfor-fprint/venv/bin/python
+"""Sync the Goodix 5117 TLS PSK from a Windows install into a plain file.
+
+Mirrors what Windows does at runtime: read C:\\ProgramData\\Goodix\\Goodix_Cache.bin,
+DPAPI-unseal it (machine scope) with the Goodix custom entropy, and hand the
+raw 32-byte PSK to the libfprint driver.
+
+Usage: goodixtls-psk-sync [cache.bin] [outfile]
+Exit:  0 ok, 2 no Windows cache, 3 crypto/parse failure
+"""
+import binascii, hashlib, os, shutil, sys, tempfile, uuid
+
+DEFAULT_OUT = "/run/goodixtls/psk"
+STAMP = DEFAULT_OUT + ".stamp"
+
+# 48-byte static blob in gfspi.dll @ VA 0x180539840 (file off 0x537e40)
+A = bytes.fromhex(
+    "9d7992b38402b66c81d1f555218942a9"
+    "1848d71550d270d219c80632ab4f8bb3"
+    "e47c8938db5250f0205617ee17da4eb4")
+
+def unescape(mp):
+    for a, b in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
+        mp = mp.replace(a, b)
+    return mp
+
+def windows_caches():
+    out = []
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                p = line.split()
+                if len(p) < 2:
+                    continue
+                c = os.path.join(unescape(p[1]), "ProgramData/Goodix/Goodix_Cache.bin")
+                if os.path.isfile(c):
+                    out.append(c)
+    except OSError:
+        pass
+    return sorted(out, key=lambda c: os.stat(c).st_mtime, reverse=True)
+
+def rootkey():
+    r = bytearray(16)
+    for i in range(8):
+        r[i] = A[i] ^ A[16 + i] ^ A[8 + i]
+    for i in range(8, 16):
+        r[i] = A[16 + i] ^ A[32 + i] ^ A[24 + i]
+    return bytes(r)
+
+def machine_key(syshive, sechive):
+    from impacket.examples.secretsdump import LocalOperations, LSASecrets
+    boot = LocalOperations(syshive).getBootKey()
+    got = []
+    s = LSASecrets(sechive, boot, isRemote=False,
+                   perSecretCallback=lambda t, sec: got.append(sec))
+    s.dumpSecrets()
+    for sec in got:
+        if isinstance(sec, str) and "dpapi_machinekey:0x" in sec:
+            for line in sec.splitlines():
+                if line.startswith("dpapi_machinekey:0x"):
+                    return binascii.unhexlify(line.split("0x", 1)[1])
+    raise RuntimeError("DPAPI_SYSTEM machine key not found")
+
+def windows_root(cache):
+    d = os.path.dirname(os.path.dirname(os.path.dirname(cache)))  # <root>/ProgramData/Goodix
+    return d
+
+def main():
+    args = sys.argv[1:]
+    cache = args[0] if args else (windows_caches() or [None])[0]
+    out = args[1] if len(args) > 1 else DEFAULT_OUT
+    if not cache or not os.path.isfile(cache):
+        return 2
+
+    root = windows_root(cache)
+    syshive = os.path.join(root, "Windows/System32/config/SYSTEM")
+    sechive = os.path.join(root, "Windows/System32/config/SECURITY")
+    protect = os.path.join(root, "Windows/System32/Microsoft/Protect")
+
+    from impacket.dpapi import DPAPI_BLOB, MasterKeyFile, MasterKey
+
+    data = open(cache, "rb").read()
+    blob = DPAPI_BLOB(data[:len(data) - 8])
+    seed = data[-8:]
+    guid = str(uuid.UUID(bytes_le=bytes(blob["GuidMasterKey"])))
+
+    mkpath = None
+    for sid in (os.listdir(protect) if os.path.isdir(protect) else []):
+        cand = os.path.join(protect, sid, guid)
+        if os.path.isfile(cand):
+            mkpath = cand
+            break
+    if mkpath is None:
+        return 3
+
+    tmp = tempfile.mkdtemp(prefix="gxpsk-")
+    try:
+        for src in (syshive, sechive):
+            shutil.copyfile(src, os.path.join(tmp, os.path.basename(src)))
+        mkey = machine_key(os.path.join(tmp, "SYSTEM"), os.path.join(tmp, "SECURITY"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    raw = open(mkpath, "rb").read()
+    mkf = MasterKeyFile(raw)
+    master = MasterKey(raw[128:128 + mkf["MasterKeyLen"]]).decrypt(mkey)
+
+    h1 = hashlib.sha256(seed).digest()
+    h2 = hashlib.sha256(h1[:16] + rootkey()).digest()
+    psk = blob.decrypt(master, h1[16:32] + h2)
+    if not psk or len(psk) != 32:
+        return 3
+
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w") as f:
+        f.write(binascii.hexlify(psk).decode() + "\n")
+    os.chmod(out, 0o600)
+    with open(STAMP if out == DEFAULT_OUT else out + ".stamp", "w") as f:
+        f.write("%s %d\n" % (cache, int(os.stat(cache).st_mtime)))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
